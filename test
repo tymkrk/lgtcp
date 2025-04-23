@@ -1,0 +1,58 @@
+--select idpayee, COUNT(*) from _tb_employee_compensation where PayrollType in (2020, 1600) group by idpayee order by COUNT(*) desc 
+
+begin tran
+
+select COUNT(*) from _tb_employee_compensation
+
+select * from _tb_employee_compensation where PayrollType in (2020, 1600) and IdPayee in 
+
+(552
+,834
+,1502
+,3171)
+order by IdPayee, AwardDate
+
+declare @bonusCodeActive int = 2020
+declare @bonusCodeInactive int = 1600
+
+
+;with cte as
+(select * from _tb_employee_compensation where PayrollType = @bonusCodeInactive)
+
+MERGE cte AS target
+USING (
+    SELECT * FROM _tb_employee_compensation WHERE PayrollType = @bonusCodeActive
+) AS source
+ON
+    target.idpayee = source.idpayee
+    AND source.AwardDate <= target.endDate
+    AND source.endDate >= target.AwardDate
+WHEN MATCHED AND source.AwardDate <= target.AwardDate AND source.endDate >= target.endDate THEN
+    DELETE 
+
+WHEN MATCHED THEN
+    UPDATE SET
+        endDate = CASE
+            -- trim left
+            WHEN source.AwardDate <= target.endDate THEN DATEADD(DAY, -1, source.AwardDate)
+            ELSE target.endDate
+        END,
+        AwardDate = CASE
+            -- trim right
+            WHEN source.AwardDate <= target.AwardDate AND source.endDate >= target.AwardDate THEN DATEADD(DAY, 1, source.endDate)
+            ELSE target.AwardDate
+		end;
+
+	select * from _tb_employee_compensation where PayrollType in (2020, 1600) and IdPayee in 
+	(552
+,834
+,1502
+,3171)
+order by IdPayee, AwardDate
+
+select COUNT(*) from _tb_employee_compensation
+
+rollback
+
+
+
