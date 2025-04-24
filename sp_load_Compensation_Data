@@ -1,0 +1,181 @@
+CREATE   PROCEDURE [dbo].[sp_load_Compensation_Data]  
+(@qc_audit_key INT, @UserId INT = -1)  
+AS  
+BEGIN  
+SET NOCOUNT ON;  
+  
+DECLARE @Category NVARCHAR(255) = 'Client';  
+DECLARE @Process NVARCHAR(255) = 'ImportLog';  
+DECLARE @SubProcess NVARCHAR(255) = OBJECT_NAME(@@PROCID);  
+DECLARE @StartDate DATETIME = GETDATE();  
+--DECLARE @UserId INT = -1 --SuperAdmin  
+DECLARE @Txt NVARCHAR(255);  
+DECLARE @Anz INT;  
+  
+BEGIN TRY  
+    BEGIN TRANSACTION @SubProcess;  
+
+
+/*
+  DECLARE @sql NVARCHAR(MAX) = 'SELECT * INTO _tb_employee_compensation'+'_'+convert(varchar, getdate(), 112)	 + replace(convert(varchar, getdate(),108),':','')+' FROM _tb_employee_compensation'
+
+  EXEC sys.sp_executesql @sql
+*/
+  
+	declare @bonusCodeActive int = 2020
+	declare @bonusCodeInactive int = 1600
+
+	drop table if exists #fields_to_be_changed
+
+    MERGE _tb_employee_compensation AS TGT
+    USING  (
+        SELECT 
+            pp.idPayee, 
+            cd.PersonnelNumber,
+            cd.CompensationType, 
+            CAST(cd.AwardDate AS DATE) AS AwardDate,
+            CAST(cd.TargetValue AS DECIMAL(18,2)) AS TargetValue, 
+            CAST(cd.PaidValue AS DECIMAL(18,2)) AS PaidValue, 
+            cd.Currency, 
+            cd.pipeline_processing_id, 
+            cd.file_processing_id
+        FROM _stg_xls_CompensationData cd
+            JOIN py_Payee pp ON cd.PersonnelNumber=pp.codePayee
+			JOIN _ref_PayrollType rp ON cd.CompensationType = rp.PayrollTypeCode
+        WHERE cd.QcStatusCode NOT LIKE '%1%'
+		AND rp.IsActive = 1
+            ) AS SRC
+    ON TGT.idPayee = SRC.idPayee
+    AND TGT.PayrollType = SRC.CompensationType
+    AND TGT.AwardDate = SRC.AwardDate
+    WHEN MATCHED THEN UPDATE SET
+        TGT.TargetValue = SRC.TargetValue,
+        TGT.PaidValue = SRC.PaidValue,
+        TGT.Currency = SRC.Currency,
+        TGT.pipeline_processing_id = SRC.pipeline_processing_id,
+        TGT.file_processing_id = SRC.file_processing_id,
+        TGT.ModificationDate = GETUTCDATE()
+    WHEN NOT MATCHED THEN INSERT
+        (
+           idPayee,
+           PersonnelNumber,
+           PayrollType,
+           AwardDate,
+           TargetValue,
+           PaidValue,
+           Currency,
+           id_user,
+           CreatedDate,
+           ModificationDate,
+           pipeline_processing_id,
+           file_processing_id 
+        )
+    VALUES
+        (
+            SRC.idPayee,
+            SRC.PersonnelNumber,
+            SRC.CompensationType,
+            SRC.AwardDate,
+            SRC.TargetValue,
+            SRC.PaidValue,
+            SRC.Currency,
+            -1,
+            GETUTCDATE(),
+            GETUTCDATE(),
+            SRC.pipeline_processing_id,
+            SRC.file_processing_id
+        );
+
+	WITH cte AS (
+	SELECT 
+		c.employeecompensationId
+	,	Lead(DATEADD("day",-1,c.AwardDate),1,'01-01-2999')  over (PARTITION BY c.PersonnelNumber, rp.PayrollTypeTechnicalCode order by c.AwardDate, c.ModificationDate) AS EndDate
+	FROM _tb_employee_compensation c
+	JOIN _ref_PayrollType rp
+		ON c.PayrollType = rp.PayrollTypeCode
+	WHERE rp.IsActive = 1
+	)
+	UPDATE f
+	SET f.EndDate = case when f.AwardDate >= c.EndDate then f.AwardDate else c.EndDate end
+	FROM _tb_employee_compensation f
+	JOIN  cte c 
+		ON  f.employeecompensationId = c.employeecompensationId
+
+  -- fill in k_m_values 
+ -- EXEC sp_refresh_process_default_values -1 
+
+
+	-- special case for 1600, 2020 handling - lgt378
+	select 
+		ina.employeecompensationId,
+		dateadd(DAY,-1,act2.AwardDate) new_end_date,
+		dateadd(DAY,1,act1.EndDate) new_award_date
+	into #fields_to_be_changed
+	from _tb_employee_compensation ina
+	left join _tb_employee_compensation act1
+		on act1.idpayee = ina.idpayee
+		AND ina.AwardDate <= act1.endDate
+		AND ina.AwardDate >= act1.AwardDate
+		and act1.PayrollType = @bonusCodeActive
+	left join _tb_employee_compensation act2
+		on act2.idpayee = ina.idpayee
+		AND act2.AwardDate <= ina.endDate
+		AND act2.AwardDate >= ina.AwardDate
+		and act2.PayrollType = @bonusCodeActive
+	where ina.PayrollType = @bonusCodeInactive
+		and (act1.employeecompensationId is not null
+			or act2.employeecompensationId is not null)
+
+	delete ec
+	from _tb_employee_compensation ec
+	join #fields_to_be_changed ftbc
+		on ec.employeecompensationId = ftbc.employeecompensationId
+	where ftbc.new_award_date is not null 
+		and ftbc.new_end_date is not null
+
+	update ec
+		set ec.AwardDate = ftbc.new_award_date
+	from _tb_employee_compensation ec
+	join #fields_to_be_changed ftbc
+		on ec.employeecompensationId = ftbc.employeecompensationId
+	where ftbc.new_award_date is not null 
+
+	update ec
+		set ec.EndDate = ftbc.new_end_date
+	from _tb_employee_compensation ec
+	join #fields_to_be_changed ftbc
+		on ec.employeecompensationId = ftbc.employeecompensationId
+	where ftbc.new_end_date is not null 
+
+
+   
+ COMMIT TRANSACTION @SubProcess  
+END TRY  
+BEGIN CATCH   
+
+  
+ DECLARE @ErrorFlag BIT = 1;  
+ DECLARE @EventText NVARCHAR(MAX) = 'Error';  
+ DECLARE @ErrorText NVARCHAR(MAX) = error_message();  
+ DECLARE @ErrorLine INT = error_line();  
+ DECLARE @xstate INT = XACT_STATE()  
+   
+  
+ IF @xstate != 0   
+  ROLLBACK TRANSACTION @SubProcess;  
+
+    
+	EXEC [sp_audit_log]  
+	  @Category  = @Category  --Events Hierarchy level 1  
+	 ,@Process  = @Process   --Events Hierarchy level 2  
+	 ,@SubProcess = @SubProcess  --Events (Names of the stored procedures)  
+	 ,@StartDate  = @StartDate --Start date to be used as a key (to know which records belong to each other)  
+	 ,@EventText  = @EventText  
+	 ,@AuditId  = @qc_audit_key  
+	 ,@UserId  = @UserId  --For application only  
+	 ,@ErrorFlag  = @ErrorFlag  
+	 ,@ErrorText  = @ErrorText  
+	 ,@ErrorLine  = @ErrorLine  
+    
+END CATCH  
+END
