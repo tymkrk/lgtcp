@@ -1,0 +1,5 @@
+
+k_m_values is populated in sp_refresh_process_default_values, where _vw_CRP_Process_Template is the source
+_vw_CRP_Process_Template reads from _tb_lgt_crp_process_dataset, which is populated in _sp_lgt_refresh_crp_process_dataset
+_sp_lgt_refresh_crp_process_dataset reads from _tb_employee_compensation
+_tb_employee_compensation is populated in sp_load_process_data_to_tables, however this can't work properly due to the issue described above
