@@ -1,0 +1,6 @@
+update _tb_payroll_type_mapping set 
+	target_field_code = 'PaidBonus_CRP-LGT-PEP_2024',
+	paid_field_code = 'PaidBonus_CRP-LGT-PE_2024',
+	target_max_field_code = 'PaidBonus_CRP-LGT-PEmax_2024',
+	target_min_field_code = 'PaidBonus_CRP-LGT-PEmin_2024'
+where year = 2024 and paid_field_code = 'PaidBonus_CRP-LGT-PEP_2024'
